@@ -1,0 +1,7 @@
+[
+    {"vendor_id": "V-01", "vendor_name": "Northwind Office Supplies", "approved": true},
+    {"vendor_id": "V-02", "vendor_name": "Beacon Logistics Group", "approved": true},
+    {"vendor_id": "V-03", "vendor_name": "Crestline Facilities Maintenance", "approved": true},
+    {"vendor_id": "V-04", "vendor_name": "Alderpoint IT Consulting", "approved": true},
+    {"vendor_id": "V-05", "vendor_name": "Quickship Parcel Co", "approved": false}
+  ]

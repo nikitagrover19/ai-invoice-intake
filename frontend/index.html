@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Invoice Intake — AP Processing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #FAF7F0;
+    --panel: #F1ECDF;
+    --ink: #24241F;
+    --ink-soft: #5B5A4E;
+    --line: #D9D0BA;
+    --green: #2E6B4C;
+    --green-bg: #E4EEE6;
+    --amber: #9C6B0B;
+    --amber-bg: #F3E9D3;
+    --red: #A23D2E;
+    --red-bg: #F3E0DA;
+    --blue: #34517C;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 15px;
+  }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 28px 40px 18px;
+    border-bottom: 2px solid var(--ink);
+  }
+  header .brand { display: flex; align-items: baseline; gap: 12px; }
+  header .brand .mark {
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.14em;
+    color: var(--ink-soft);
+    border: 1.5px solid var(--ink-soft);
+    padding: 3px 7px;
+  }
+  header h1 { font-size: 21px; font-weight: 600; margin: 0; }
+  nav { display: flex; gap: 4px; }
+  nav button {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    background: none;
+    border: 1.5px solid var(--ink);
+    color: var(--ink);
+    padding: 8px 18px;
+    cursor: pointer;
+  }
+  nav button.active { background: var(--ink); color: var(--paper); }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 34px 40px 80px; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* ---------- Process view ---------- */
+  .process-grid {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 28px;
+    align-items: start;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 22px;
+  }
+  .panel h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--ink-soft);
+    margin: 0 0 16px;
+    font-weight: 600;
+  }
+  .dropzone {
+    border: 2px dashed var(--line);
+    padding: 28px 14px;
+    text-align: center;
+    color: var(--ink-soft);
+    font-size: 13.5px;
+    cursor: pointer;
+    margin-bottom: 22px;
+  }
+  .dropzone:hover { border-color: var(--blue); color: var(--blue); }
+  .dropzone.drag { border-color: var(--blue); background: #eef2f7; }
+  #fileInput { display: none; }
+
+  .sample-list { display: flex; flex-direction: column; gap: 8px; }
+  .sample-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 12px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    cursor: pointer;
+    text-align: left;
+  }
+  .sample-item:hover { border-color: var(--blue); }
+  .sample-item .fname { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; font-weight: 600; }
+  .sample-item .fdesc { font-size: 12px; color: var(--ink-soft); }
+
+  .run-panel { min-height: 420px; }
+  .run-empty { color: var(--ink-soft); font-size: 14px; padding: 40px 0; text-align: center; }
+
+  .processing-box {
+    display: flex; align-items: center; gap: 12px;
+    padding: 30px 0; color: var(--ink-soft); font-size: 13.5px;
+  }
+  .spinner {
+    width: 18px; height: 18px; border-radius: 50%;
+    border: 2.5px solid var(--line); border-top-color: var(--blue);
+    animation: spin 0.8s linear infinite; flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .error-box {
+    padding: 16px; border: 1.5px solid var(--red); background: var(--red-bg);
+    color: var(--red); font-size: 13.5px; line-height: 1.5;
+  }
+
+  .sample-item.disabled, .dropzone.disabled {
+    opacity: 0.5; pointer-events: none;
+  }
+
+  .stage-row {
+    display: grid;
+    grid-template-columns: 22px 150px 1fr;
+    gap: 14px;
+    align-items: start;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+    animation: reveal 0.28s ease-out;
+  }
+  .stage-row:last-child { border-bottom: none; }
+  @keyframes reveal {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .stage-marker {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    margin-top: 2px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: #fff;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .stage-marker.pass { background: var(--green); }
+  .stage-marker.warn { background: var(--amber); }
+  .stage-marker.fail { background: var(--red); }
+  .stage-marker.info { background: var(--blue); }
+  .stage-name {
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 600;
+    font-size: 13px;
+    padding-top: 1px;
+  }
+  .stage-summary { font-size: 13.5px; line-height: 1.5; color: var(--ink); }
+
+  .stamp-wrap { text-align: center; padding: 30px 0 10px; }
+  .stamp {
+    display: inline-block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: 0.14em;
+    border: 3px solid currentColor;
+    border-radius: 6px;
+    padding: 10px 26px;
+    transform: rotate(-3deg);
+  }
+  .stamp.APPROVED { color: var(--green); }
+  .stamp.NEEDS_REVIEW { color: var(--amber); }
+  .stamp.REJECTED { color: var(--red); }
+
+  .reasons { margin-top: 18px; }
+  .reasons h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-soft); margin: 0 0 8px; }
+  .reasons ul { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.6; }
+
+  .meta-line { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 14px; }
+  .meta-line b { color: var(--ink); }
+
+  /* ---------- Dashboard view ---------- */
+  .summary-row { display: flex; gap: 14px; margin-bottom: 26px; }
+  .summary-card {
+    flex: 1;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    padding: 16px 18px;
+  }
+  .summary-card .num { font-family: 'IBM Plex Mono', monospace; font-size: 26px; font-weight: 700; }
+  .summary-card .lbl { font-size: 12px; color: var(--ink-soft); letter-spacing: 0.04em; }
+  .summary-card.approved .num { color: var(--green); }
+  .summary-card.review .num { color: var(--amber); }
+  .summary-card.rejected .num { color: var(--red); }
+
+  section.block { margin-bottom: 30px; }
+  section.block h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--ink-soft); margin: 0 0 14px; font-weight: 600;
+    border-bottom: 1px solid var(--line); padding-bottom: 8px;
+  }
+
+  .po-row { display: grid; grid-template-columns: 110px 1fr 160px 100px 70px; gap: 14px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .po-row .ponum { font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
+  .po-bar-track { height: 8px; background: var(--line); position: relative; }
+  .po-bar-fill { height: 8px; background: var(--blue); }
+  .po-amt { font-family: 'IBM Plex Mono', monospace; text-align: right; }
+
+  .vendor-row { display: grid; grid-template-columns: 1fr 130px 80px 80px; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .mini-btn {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+    background: none; border: 1.5px solid var(--ink-soft); color: var(--ink-soft);
+    padding: 4px 8px; cursor: pointer;
+  }
+  .mini-btn:hover { border-color: var(--blue); color: var(--blue); }
+  .mini-btn.danger:hover { border-color: var(--red); color: var(--red); }
+
+  .inline-form { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+  .inline-form input[type=text], .inline-form input[type=number], .inline-form select {
+    font-family: 'IBM Plex Mono', monospace; font-size: 12.5px;
+    padding: 7px 9px; border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  }
+  .inline-form input[type=text] { min-width: 200px; }
+  .inline-form button[type=submit] {
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.03em;
+    background: var(--ink); color: var(--paper); border: 1.5px solid var(--ink);
+    padding: 8px 16px; cursor: pointer;
+  }
+  .inline-form button[type=submit]:hover { opacity: 0.85; }
+  .checkbox-label { font-size: 12.5px; display: flex; align-items: center; gap: 5px; color: var(--ink-soft); }
+  .form-error { color: var(--red); font-size: 12.5px; margin-top: 8px; display: none; }
+
+  table.runs { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.runs th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--ink-soft); border-bottom: 1.5px solid var(--ink); padding: 8px 10px; font-weight: 600;
+  }
+  table.runs td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.runs tr:hover { background: var(--panel); cursor: pointer; }
+  .decision-chip {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    padding: 3px 8px; border-radius: 3px; display: inline-block;
+  }
+  .decision-chip.APPROVED { background: var(--green-bg); color: var(--green); }
+  .decision-chip.NEEDS_REVIEW { background: var(--amber-bg); color: var(--amber); }
+  .decision-chip.REJECTED { background: var(--red-bg); color: var(--red); }
+
+  .empty-state { color: var(--ink-soft); font-size: 13.5px; padding: 20px 0; }
+  button.reset-btn {
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+    background: none; border: 1.5px solid var(--ink-soft); color: var(--ink-soft);
+    padding: 6px 12px; cursor: pointer;
+  }
+  button.reset-btn:hover { border-color: var(--red); color: var(--red); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="mark">AP</span>
+    <h1>Invoice Intake</h1>
+  </div>
+  <nav>
+    <button class="active" data-view="process">Process</button>
+    <button data-view="dashboard">Ledger</button>
+  </nav>
+</header>
+
+<main>
+  <!-- PROCESS VIEW -->
+  <section id="view-process" class="view active">
+    <div class="process-grid">
+      <div class="panel">
+        <h2>New invoice</h2>
+        <div class="dropzone" id="dropzone">
+          Drop a PDF here<br>or click to choose a file
+        </div>
+        <input type="file" id="fileInput" accept="application/pdf">
+        <h2>Sample invoices</h2>
+        <div class="sample-list" id="sampleList"></div>
+      </div>
+
+      <div class="panel run-panel">
+        <h2>Live run</h2>
+        <div id="runContent">
+          <div class="run-empty">Upload an invoice or pick a sample to watch it run.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DASHBOARD VIEW -->
+  <section id="view-dashboard" class="view">
+    <div class="summary-row" id="summaryRow"></div>
+
+    <section class="block">
+      <h2>Approved vendors</h2>
+      <div id="vendorList"></div>
+      <form id="addVendorForm" class="inline-form">
+        <input type="text" id="newVendorName" placeholder="New vendor name" required>
+        <label class="checkbox-label"><input type="checkbox" id="newVendorApproved" checked> Approved</label>
+        <button type="submit">Add vendor</button>
+      </form>
+      <div class="form-error" id="vendorFormError"></div>
+    </section>
+
+    <section class="block">
+      <h2>Purchase order balances</h2>
+      <div id="poList"></div>
+      <form id="addPoForm" class="inline-form">
+        <input type="text" id="newPoNumber" placeholder="PO number" required>
+        <select id="newPoVendor" required></select>
+        <input type="number" id="newPoAmount" placeholder="Amount" step="0.01" min="0.01" required>
+        <button type="submit">Add PO</button>
+      </form>
+      <div class="form-error" id="poFormError"></div>
+    </section>
+
+    <section class="block">
+      <h2 style="display:flex; justify-content:space-between; align-items:center;">
+        <span>Run history</span>
+        <button class="reset-btn" id="resetBtn">Reset demo data</button>
+      </h2>
+      <div id="runsTableWrap"></div>
+    </section>
+  </section>
+</main>
+
+<script>
+const API = "";
+
+// ---------- Navigation ----------
+document.querySelectorAll('nav button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-' + btn.dataset.view).classList.add('active');
+    if (btn.dataset.view === 'dashboard') loadDashboard();
+  });
+});
+
+// ---------- Sample list ----------
+async function loadSamples() {
+  const res = await fetch(API + '/api/samples');
+  const samples = await res.json();
+  const el = document.getElementById('sampleList');
+  el.innerHTML = '';
+  samples.forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'sample-item';
+    div.innerHTML = `<span class="fname">${s.filename}</span><span class="fdesc">${s.description}</span>`;
+    div.addEventListener('click', () => runSample(s.filename));
+    el.appendChild(div);
+  });
+}
+
+// ---------- Upload / drag-drop ----------
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('drag');
+  if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) uploadFile(fileInput.files[0]);
+});
+
+async function uploadFile(file) {
+  if (isBusy) return;
+  await runPipeline(file.name, async () => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return fetch(API + '/api/invoices/upload', { method: 'POST', body: fd });
+  });
+}
+
+async function runSample(filename) {
+  if (isBusy) return;
+  await runPipeline(filename, () =>
+    fetch(API + '/api/invoices/run-sample/' + encodeURIComponent(filename), { method: 'POST' })
+  );
+}
+
+let isBusy = false;
+
+function setBusy(busy) {
+  isBusy = busy;
+  dropzone.classList.toggle('disabled', busy);
+  document.querySelectorAll('.sample-item').forEach(el => el.classList.toggle('disabled', busy));
+}
+
+async function runPipeline(label, doFetch) {
+  setBusy(true);
+  showProcessing(label);
+  const slowNoticeTimer = setTimeout(() => showProcessing(label, true), 2500);
+  try {
+    const res = await doFetch();
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Server returned ${res.status}${text ? ': ' + text.slice(0, 200) : ''}`);
+    }
+    await streamResponse(res);
+  } catch (err) {
+    showError(label, err);
+  } finally {
+    clearTimeout(slowNoticeTimer);
+    setBusy(false);
+  }
+}
+
+function showProcessing(label, slow) {
+  const content = document.getElementById('runContent');
+  content.innerHTML = `<div class="meta-line"><b>${label}</b></div>
+    <div class="processing-box"><div class="spinner"></div>
+      <span>${slow ? 'Still working — extraction can take a few seconds when the AI path is being used...' : 'Starting run...'}</span>
+    </div>`;
+}
+
+function showError(label, err) {
+  const content = document.getElementById('runContent');
+  content.innerHTML = `<div class="meta-line"><b>${label}</b></div>
+    <div class="error-box"><b>Something went wrong.</b><br>${(err && err.message) || err}</div>`;
+}
+
+function resetRunPanel() {
+  document.getElementById('runContent').innerHTML = '';
+}
+
+const STAGE_ICON = { pass: '✓', warn: '!', fail: '✕', info: 'i' };
+
+async function streamResponse(res) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let renderedStageCount = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch (e) {
+        continue; // skip a malformed line rather than breaking the whole run
+      }
+      renderedStageCount = renderRun(event.run, renderedStageCount, event.type === 'done');
+    }
+  }
+  if (renderedStageCount === 0) {
+    // stream closed with no stages at all - surface that instead of leaving the spinner up
+    throw new Error('No response received from the pipeline. Check the server terminal for errors.');
+  }
+}
+
+function renderRun(run, renderedStageCount, isDone) {
+  const content = document.getElementById('runContent');
+  if (renderedStageCount === 0) {
+    content.innerHTML = `<div class="meta-line"><b>${run.filename}</b></div><div id="stageList"></div><div id="stampArea"></div>`;
+  }
+  const stageList = document.getElementById('stageList');
+  while (renderedStageCount < run.stages.length) {
+    const s = run.stages[renderedStageCount];
+    const row = document.createElement('div');
+    row.className = 'stage-row';
+    row.innerHTML = `
+      <div class="stage-marker ${s.status}">${STAGE_ICON[s.status] || ''}</div>
+      <div class="stage-name">${s.stage}</div>
+      <div class="stage-summary">${s.summary}</div>`;
+    stageList.appendChild(row);
+    renderedStageCount++;
+  }
+  if (isDone) {
+    const stampArea = document.getElementById('stampArea');
+    let reasonsHtml = '';
+    if (run.reasons && run.reasons.length) {
+      reasonsHtml = `<div class="reasons"><h3>Why</h3><ul>${run.reasons.map(r => `<li>${r}</li>`).join('')}</ul></div>`;
+    }
+    stampArea.innerHTML = `<div class="stamp-wrap"><span class="stamp ${run.decision}">${run.decision.replace('_',' ')}</span></div>${reasonsHtml}`;
+  }
+  return renderedStageCount;
+}
+
+// ---------- Dashboard ----------
+async function loadDashboard() {
+  const [runsRes, posRes, vendorsRes] = await Promise.all([
+    fetch(API + '/api/runs'), fetch(API + '/api/pos'), fetch(API + '/api/vendors')
+  ]);
+  const runs = await runsRes.json();
+  const pos = await posRes.json();
+  const vendors = await vendorsRes.json();
+  renderSummary(runs);
+  renderVendors(vendors);
+  renderPOs(pos);
+  populateVendorSelect(vendors);
+  renderRunsTable(runs);
+}
+
+function renderVendors(vendors) {
+  const el = document.getElementById('vendorList');
+  if (!vendors.length) { el.innerHTML = '<div class="empty-state">No vendors on file.</div>'; return; }
+  el.innerHTML = vendors.map(v => `
+    <div class="vendor-row">
+      <div>${v.vendor_name}</div>
+      <span class="decision-chip ${v.approved ? 'APPROVED' : 'REJECTED'}">${v.approved ? 'APPROVED' : 'NOT APPROVED'}</span>
+      <button class="mini-btn" data-toggle="${v.vendor_id}" data-approved="${v.approved}">${v.approved ? 'Revoke' : 'Approve'}</button>
+      <button class="mini-btn danger" data-delete="${v.vendor_id}">Remove</button>
+    </div>`).join('');
+  el.querySelectorAll('[data-toggle]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const approved = btn.dataset.approved === 'true';
+      await fetch(API + '/api/vendors/' + btn.dataset.toggle, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved: !approved })
+      });
+      loadDashboard();
+    });
+  });
+  el.querySelectorAll('[data-delete]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Remove this vendor from the approved list?')) return;
+      await fetch(API + '/api/vendors/' + btn.dataset.delete, { method: 'DELETE' });
+      loadDashboard();
+    });
+  });
+}
+
+function populateVendorSelect(vendors) {
+  const sel = document.getElementById('newPoVendor');
+  const current = sel.value;
+  sel.innerHTML = vendors.map(v => `<option value="${v.vendor_name}">${v.vendor_name}</option>`).join('');
+  if (vendors.some(v => v.vendor_name === current)) sel.value = current;
+}
+
+document.getElementById('addVendorForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const nameInput = document.getElementById('newVendorName');
+  const errEl = document.getElementById('vendorFormError');
+  errEl.style.display = 'none';
+  const res = await fetch(API + '/api/vendors', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      vendor_name: nameInput.value.trim(),
+      approved: document.getElementById('newVendorApproved').checked
+    })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    errEl.textContent = err.detail || 'Could not add vendor.';
+    errEl.style.display = 'block';
+    return;
+  }
+  nameInput.value = '';
+  loadDashboard();
+});
+
+document.getElementById('addPoForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const poInput = document.getElementById('newPoNumber');
+  const amtInput = document.getElementById('newPoAmount');
+  const errEl = document.getElementById('poFormError');
+  errEl.style.display = 'none';
+  const res = await fetch(API + '/api/pos', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      po_number: poInput.value.trim(),
+      vendor_name: document.getElementById('newPoVendor').value,
+      po_amount: parseFloat(amtInput.value)
+    })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    errEl.textContent = err.detail || 'Could not add PO.';
+    errEl.style.display = 'block';
+    return;
+  }
+  poInput.value = '';
+  amtInput.value = '';
+  loadDashboard();
+});
+
+function renderSummary(runs) {
+  const counts = { APPROVED: 0, NEEDS_REVIEW: 0, REJECTED: 0 };
+  runs.forEach(r => { if (counts[r.decision] !== undefined) counts[r.decision]++; });
+  const el = document.getElementById('summaryRow');
+  el.innerHTML = `
+    <div class="summary-card approved"><div class="num">${counts.APPROVED}</div><div class="lbl">Approved</div></div>
+    <div class="summary-card review"><div class="num">${counts.NEEDS_REVIEW}</div><div class="lbl">Needs review</div></div>
+    <div class="summary-card rejected"><div class="num">${counts.REJECTED}</div><div class="lbl">Rejected</div></div>
+    <div class="summary-card"><div class="num">${runs.length}</div><div class="lbl">Total processed</div></div>`;
+}
+
+function renderPOs(pos) {
+  const el = document.getElementById('poList');
+  if (!pos.length) { el.innerHTML = '<div class="empty-state">No purchase orders on file.</div>'; return; }
+  el.innerHTML = pos.map(po => {
+    const pct = Math.min(100, (po.amount_invoiced_so_far / po.po_amount) * 100);
+    return `<div class="po-row">
+      <div class="ponum">${po.po_number}</div>
+      <div>${po.vendor_name}</div>
+      <div class="po-bar-track"><div class="po-bar-fill" style="width:${pct}%"></div></div>
+      <div class="po-amt">$${po.amount_invoiced_so_far.toLocaleString(undefined,{minimumFractionDigits:0})} / $${po.po_amount.toLocaleString(undefined,{minimumFractionDigits:0})}</div>
+      <button class="mini-btn danger" data-delete-po="${po.po_number}">Remove</button>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('[data-delete-po]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm(`Remove PO ${btn.dataset.deletePo}? This can't be undone.`)) return;
+      await fetch(API + '/api/pos/' + encodeURIComponent(btn.dataset.deletePo), { method: 'DELETE' });
+      loadDashboard();
+    });
+  });
+}
+
+function renderRunsTable(runs) {
+  const wrap = document.getElementById('runsTableWrap');
+  if (!runs.length) { wrap.innerHTML = '<div class="empty-state">No invoices processed yet. Run one from the Process tab.</div>'; return; }
+  const rows = runs.map(r => {
+    const ext = r.extracted || {};
+    const time = new Date(r.created_at).toLocaleString();
+    return `<tr data-runid="${r.run_id}">
+      <td class="mono">${time}</td>
+      <td>${r.filename}</td>
+      <td>${ext.vendor_name || '—'}</td>
+      <td class="mono">${r.matched_po || '—'}</td>
+      <td class="mono">${ext.total != null ? '$' + ext.total.toLocaleString(undefined,{minimumFractionDigits:2}) : '—'}</td>
+      <td><span class="decision-chip ${r.decision}">${r.decision.replace('_',' ')}</span></td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML = `<table class="runs">
+    <thead><tr><th>Time</th><th>File</th><th>Vendor</th><th>PO</th><th>Total</th><th>Decision</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+  wrap.querySelectorAll('tr[data-runid]').forEach(tr => {
+    tr.addEventListener('click', () => showRunDetail(tr.dataset.runid, runs));
+  });
+}
+
+function showRunDetail(runId, runs) {
+  const run = runs.find(r => r.run_id === runId);
+  if (!run) return;
+  document.querySelector('nav button[data-view="process"]').click();
+  resetRunPanel();
+  renderRun(run, 0, true);
+}
+
+document.getElementById('resetBtn').addEventListener('click', async () => {
+  if (!confirm('Reset all run history and PO balances back to the seed data?')) return;
+  await fetch(API + '/api/reset', { method: 'POST' });
+  loadDashboard();
+});
+
+loadSamples();
+</script>
+</body>
+</html>
