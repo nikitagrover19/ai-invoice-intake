@@ -1,152 +1,274 @@
 # Invoice Intake — AP Processing
 
-Takes a vendor invoice (PDF), extracts the key fields, matches it to a purchase
-order, applies business rules, and produces a reasoned decision — APPROVED,
-NEEDS_REVIEW, or REJECTED — with every step of the reasoning visible.
+A small AP invoice processing application.
+
+Given a vendor invoice as a PDF, the application extracts the invoice details, finds the matching purchase order, checks the invoice against a set of business rules, and returns one of:
+
+* `APPROVED`
+* `NEEDS_REVIEW`
+* `REJECTED`
+
+The UI shows the individual checks and the reason for the final decision.
 
 ## Quick start
 
 ```bash
-pip install -r requirements.txt --break-system-packages   # or use a venv
+pip install -r requirements.txt
 ./run.sh
 ```
 
-Open **http://localhost:8420**. Click any sample invoice in the left panel to
-watch it run, or drag your own PDF into the dropzone. Switch to the **Ledger**
-tab to see run history and live PO balances.
+Open:
 
-### Enabling real AI extraction
+```text
+http://localhost:8420
+```
 
-Without an API key, extraction falls back to heuristic regex parsing — the
-whole pipeline still runs end-to-end, it's just less robust on messy/varied
-invoice layouts (which is most of the point of PS-1). To use real LLM-based
-extraction (handles inconsistent formats, and handles scanned/image invoices
-via vision), this project uses **Google's Gemini API**, which has a genuinely
-free tier — no credit card required:
+The left panel contains sample invoices. Select one to run it through the pipeline, or upload a PDF using the dropzone.
+
+The **Ledger** tab shows previous runs, vendors, and current PO balances.
+
+## AI extraction
+
+The application can use Google's Gemini API for invoice extraction.
+
+If no API key is configured, it uses the PDF text and a regex-based parser instead. This is enough to run the included examples, but it is less reliable when invoice layouts vary.
+
+To enable Gemini:
 
 ```bash
 cp .env.example .env
-# get a free key at https://aistudio.google.com/apikey, then put it in .env:
-#   GEMINI_API_KEY=AIza...
 ```
 
-Restart the server after adding the key. If you hit rate limits while
-rehearsing (the free tier is generous but not unlimited), switch to the
-lighter `gemini-3.1-flash-lite` model by uncommenting `GEMINI_MODEL` in `.env`.
+Add your key to `.env`:
 
-## How it works
-
-```
-PDF invoice → EXTRACT → VALIDATE → DUPLICATE CHECK → VENDOR APPROVAL
-                                  → PO MATCH → AMOUNT TOLERANCE → DECISION
+```text
+GEMINI_API_KEY=your_key_here
 ```
 
-- **Extract** (`backend/extraction.py`) — pulls vendor, invoice #, date, PO #,
-  line items, and totals. Uses an LLM for structured extraction when a key is
-  present (text or vision, depending on whether the PDF has extractable
-  text); otherwise falls back to regex heuristics.
-- **Validate** — checks the fields required to make any decision at all are
-  present (vendor, invoice number, total). Missing critical data routes
-  straight to NEEDS_REVIEW rather than guessing.
-- **Duplicate check** (`backend/rules.py`) — same vendor + invoice number
-  already on file → REJECTED, with a pointer to the original run.
-- **Vendor approval** — invoice from a vendor not on the approved list is
-  REJECTED regardless of how well the amounts line up.
-- **PO match** (`backend/matching.py`) — direct lookup by PO number; if the
-  invoice doesn't reference one, falls back to matching by vendor + closest
-  remaining PO balance, flagged as a lower-confidence *inferred* match.
-- **Amount tolerance** — compares the invoice total against the PO's
-  *remaining* balance (not the original PO amount), so partial/split
-  invoices against an already-partially-consumed PO are handled correctly.
-  Small overages pass, moderate overages go to review, large overages reject.
-- **Decision** (`backend/decision.py`) — orchestrates the above into a final
-  call with a full, visible trace. Approved invoices decrement the PO's
-  remaining balance.
+Restart the server after changing the environment variables.
 
-Data lives in plain JSON (`backend/data/`) — `po_dataset.json` (purchase
-orders), `vendors.json` (approved vendor list), `runs.json` (history,
-generated at runtime). No database setup needed for a demo of this size.
+For scanned invoices, Gemini's vision input is used when an API key is available.
 
-## The 4 edge cases
+## Processing flow
 
-| Sample file | What it tests |
-|---|---|
-| `edge_missing_po.pdf` | No PO number anywhere on the invoice — must fuzzy-match by vendor + amount, flagged as lower-confidence |
-| `edge_split_po_overage.pdf` | Invoice against a PO that's already partially invoiced; overage beyond tolerance but not drastic → NEEDS_REVIEW |
-| `edge_duplicate.pdf` | Run it twice — second submission is auto-rejected as a duplicate |
-| `edge_unapproved_vendor.pdf` | Vendor isn't on the approved list → hard reject regardless of amount match |
+```text
+PDF
+ │
+ ▼
+Extract fields
+ │
+ ▼
+Validate required fields
+ │
+ ├── Duplicate check
+ ├── Vendor check
+ ├── PO matching
+ └── Amount check
+ │
+ ▼
+Decision
+```
 
-Bonus: `edge_scanned_invoice.pdf` is a rendered image with no machine-readable
-text — without an API key it correctly explains it can't extract from a scan
-rather than failing silently; with a key, it runs through the vision path.
+### Extraction
 
-Regenerate all sample PDFs any time with:
+`backend/extraction.py`
+
+Extracts:
+
+* vendor
+* invoice number
+* invoice date
+* PO number
+* line items
+* invoice total
+
+When Gemini is configured, it is used for structured extraction. PDFs with no machine-readable text can go through the vision path. Without an API key, the application falls back to local parsing.
+
+### Validation
+
+The application checks that the fields needed to make a decision are present.
+
+A missing vendor, invoice number, or total results in `NEEDS_REVIEW` instead of attempting to fill in the missing value.
+
+### Duplicate check
+
+`backend/rules.py`
+
+An invoice is considered a duplicate when the same vendor and invoice number already exist in the run history.
+
+A duplicate is rejected and the previous run is included in the result.
+
+### Vendor check
+
+Invoices from vendors that are not on the approved vendor list are rejected.
+
+Vendor names are normalized before comparison so common company suffixes such as `LLC`, `Inc`, `Corp`, and `Ltd` do not affect the match.
+
+### PO matching
+
+`backend/matching.py`
+
+The application first looks for an exact PO number.
+
+If the invoice does not contain a PO number, it tries to find a PO using the vendor and remaining PO balance. These matches are marked as inferred rather than exact.
+
+### Amount check
+
+The invoice total is compared against the **remaining** PO balance.
+
+This matters for POs that have already been partially invoiced.
+
+The rules are:
+
+* within the allowed amount → continue
+* small overage → continue
+* moderate overage → `NEEDS_REVIEW`
+* large overage → `REJECTED`
+
+When an invoice is approved, the PO's remaining balance is updated.
+
+### Decision
+
+`backend/decision.py`
+
+Coordinates the processing steps and produces a `RunRecord` containing the extracted data, checks, and final decision.
+
+## Sample cases
+
+The repository includes sample invoices for the main edge cases.
+
+| File                         | Case                                                                    |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| `edge_missing_po.pdf`        | No PO number on the invoice; the application attempts an inferred match |
+| `edge_split_po_overage.pdf`  | Invoice uses a partially consumed PO and exceeds the remaining balance  |
+| `edge_duplicate.pdf`         | Running the same invoice twice triggers the duplicate check             |
+| `edge_unapproved_vendor.pdf` | Vendor is not on the approved vendor list                               |
+| `edge_scanned_invoice.pdf`   | Scanned invoice with no machine-readable PDF text                       |
+| `wildcard_novel_format.pdf`  | Invoice with a different layout from the standard samples               |
+
+The duplicate case needs to be run twice to see the second submission rejected.
+
+## Generating sample invoices
+
+The sample PDFs can be regenerated with:
+
 ```bash
 python3 test_invoices/generate_test_invoices.py
 ```
 
-## Testing without the UI
+## Testing
+
+The pipeline can also be run without the web UI:
 
 ```bash
 cd backend
 python3 test_pipeline.py
 ```
-Runs every sample through the pipeline and prints the full stage-by-stage
-trace for each — useful for checking logic changes quickly.
 
-## Managing vendors and POs
+This runs the sample invoices and prints the processing steps and final decisions.
 
-You don't need to hand-edit the JSON files — the **Ledger** tab has an
-"Approved vendors" panel (add a vendor, toggle approved/revoked, remove one)
-and a "Purchase order balances" panel with its own "Add PO" form underneath
-it. Both write straight to `backend/data/vendors.json` / `po_dataset.json`,
-so anything you add there is usable immediately the next time you process an
-invoice — no restart needed. Vendor-name matching is suffix-insensitive
-(strips LLC/Inc/Corp/Ltd/etc. before comparing), but PO numbers still have to
-match exactly.
+## Vendors and purchase orders
 
-## Resetting demo data
+The **Ledger** tab provides controls for managing the demo data.
 
-Click "Reset demo data" on the Ledger tab, or:
+### Vendors
+
+You can:
+
+* add a vendor
+* approve or revoke a vendor
+* remove a vendor
+
+Changes are written to:
+
+```text
+backend/data/vendors.json
+```
+
+### Purchase orders
+
+You can add POs and view their remaining balances.
+
+PO data is stored in:
+
+```text
+backend/data/po_dataset.json
+```
+
+Changes take effect on the next invoice run without restarting the server.
+
+## Resetting the demo
+
+The Ledger tab has a **Reset demo data** button.
+
+The same operation can be triggered from the command line:
+
 ```bash
 curl -X POST http://localhost:8420/api/reset
 ```
-This clears run history and restores PO balances *and the vendor list* back
-to their seed values — useful for repeating the demo cleanly before the live
-interview, including undoing any vendors/POs you added while rehearsing.
 
-## Deploying for a public link
+This clears the run history and restores the PO balances and vendor list from their seed files.
 
-For the case study submission you need a live, reachable URL. Fastest options
-for a single FastAPI app:
-- **Render** (render.com) — connect the repo, set the build command to
-  `pip install -r requirements.txt` and the start command to
-  `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`. Add `GEMINI_API_KEY`
-  under Environment.
-- **Railway** (railway.app) — same idea, auto-detects the start command from
-  `run.sh` with minor tweaks, or set it explicitly as above.
+## Data
 
-Either free tier is enough for a demo of this size.
+The application uses JSON files rather than a database:
 
-## Project layout
-
+```text
+backend/data/
+├── po_dataset.json
+├── po_dataset.seed.json
+├── vendors.json
+├── vendors.seed.json
+└── runs.json
 ```
-invoice-processor/
+
+`runs.json` contains the processing history and is updated while the application is running.
+
+## Deployment
+
+The application is a FastAPI service and can be deployed on platforms such as Render or Railway.
+
+Build command:
+
+```bash
+pip install -r requirements.txt
+```
+
+Start command:
+
+```bash
+uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+```
+
+Set `GEMINI_API_KEY` in the platform's environment variables if Gemini extraction is required.
+
+## Project structure
+
+```text
+ai-invoice-intake/
 ├── backend/
-│   ├── main.py          FastAPI app + streaming endpoint
-│   ├── models.py         Data models
-│   ├── extraction.py     PDF → structured fields (LLM + heuristic fallback)
-│   ├── matching.py       PO matching (exact + fuzzy)
-│   ├── rules.py          Vendor approval, tolerance, duplicate checks
-│   ├── decision.py       Orchestrates everything into a RunRecord
-│   ├── storage.py        JSON persistence
-│   ├── test_pipeline.py  CLI test harness
-│   └── data/             po_dataset.json, vendors.json, runs.json
+│   ├── main.py
+│   ├── models.py
+│   ├── extraction.py
+│   ├── matching.py
+│   ├── rules.py
+│   ├── decision.py
+│   ├── storage.py
+│   ├── test_pipeline.py
+│   └── data/
+│       ├── po_dataset.json
+│       ├── po_dataset.seed.json
+│       ├── vendors.json
+│       ├── vendors.seed.json
+│       └── runs.json
 ├── frontend/
-│   └── index.html        Single-file UI: live run view + dashboard
+│   └── index.html
 ├── test_invoices/
-│   └── generate_test_invoices.py   generates all sample PDFs
+│   ├── generate_test_invoices.py
+│   └── *.pdf
 ├── requirements.txt
 ├── .env.example
+├── .gitignore
+├── README.md
 └── run.sh
 ```
