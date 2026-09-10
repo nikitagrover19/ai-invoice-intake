@@ -28,8 +28,19 @@ def check_amount_tolerance(invoice_total: Optional[float], po: PurchaseOrder) ->
         return "fail", "Invoice has no total amount to check against the PO.", 0.0
 
     remaining = po.po_amount - po.amount_invoiced_so_far
-    tolerance = max(remaining * po.tolerance_pct, po.tolerance_min_amount)
     overage = invoice_total - remaining
+
+    # PO already fully (or over-) consumed - there's no budget left at all,
+    # regardless of how small this new invoice is. Handling this before any
+    # percentage math matters: dividing by a negative/zero remaining balance
+    # below would flip the sign and produce a nonsensical result (e.g. a
+    # massive overage reading as a tiny negative percentage, which would
+    # incorrectly pass the "not drastic" check).
+    if remaining <= 0:
+        return "fail", (f"This PO has no remaining balance (${remaining:,.2f}) - it's already fully "
+                         f"invoiced. This invoice of ${invoice_total:,.2f} can't be applied against it."), overage
+
+    tolerance = max(remaining * po.tolerance_pct, po.tolerance_min_amount)
 
     if overage <= tolerance:
         if overage > 0:
@@ -38,8 +49,9 @@ def check_amount_tolerance(invoice_total: Optional[float], po: PurchaseOrder) ->
         return "pass", (f"Invoice total ${invoice_total:,.2f} is within the remaining PO balance "
                          f"of ${remaining:,.2f}."), overage
 
-    # overage exceeds tolerance
-    overage_pct = (overage / remaining * 100) if remaining else float("inf")
+    # overage exceeds tolerance - remaining is guaranteed positive here, so
+    # this division is always safe and the percentage always means what it says.
+    overage_pct = overage / remaining * 100
     if overage_pct <= 20:
         return "warn", (f"Invoice total ${invoice_total:,.2f} exceeds remaining PO balance ${remaining:,.2f} "
                          f"by ${overage:,.2f} ({overage_pct:.1f}%), beyond the ${tolerance:,.2f} tolerance "
